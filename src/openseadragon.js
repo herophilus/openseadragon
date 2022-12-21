@@ -742,6 +742,12 @@ function OpenSeadragon( options ){
 
 (function( $ ){
 
+    $.ajaxQueue = {
+        requestFuncs: [],
+        numRequests: 0,
+        numActiveRequests: 0,
+        maxConcurrency: 0,
+    };
 
     /**
      * The OpenSeadragon version.
@@ -1209,6 +1215,7 @@ function OpenSeadragon( options ){
 
             //PERFORMANCE SETTINGS
             imageLoaderLimit:       0,
+            tileSourceLoaderLimit:  0,
             maxImageCacheCount:     200,
             timeout:                30000,
             useCanvas:              true,  // Use canvas element for drawing if available
@@ -2190,6 +2197,43 @@ function OpenSeadragon( options ){
             return $.createAjaxRequest( local );
         },
 
+        queueAjaxRequest: function (request, sendRequestFunc) {
+            if(!$.ajaxQueue.maxConcurrency) {
+                sendRequestFunc();
+            }
+
+            var oldOnStateChange = request.onreadystatechange;
+
+            var onCompleteRequest = function() {
+                $.ajaxQueue.numRequests--;
+
+                if (
+                    $.ajaxQueue.numActiveRequests === $.ajaxQueue.maxConcurrency &&
+                    $.ajaxQueue.requestFuncs.length > 0
+                ) {
+                    $.ajaxQueue.requestFuncs.shift()();
+                } else {
+                    $.ajaxQueue.numActiveRequests--;
+                }
+            };
+
+            request.onreadystatechange = function() {
+                if ( request.readyState === 4 ) {
+                    onCompleteRequest();
+                    oldOnStateChange();
+                }
+            };
+
+            $.ajaxQueue.numRequests++;
+
+            if ($.ajaxQueue.numActiveRequests === $.ajaxQueue.maxConcurrency) {
+                $.ajaxQueue.requestFuncs.push(sendRequestFunc);
+            } else {
+                $.ajaxQueue.numActiveRequests++;
+                sendRequestFunc();
+            }
+        },
+
         /**
          * Makes an AJAX request.
          * @param {Object} options
@@ -2206,6 +2250,8 @@ function OpenSeadragon( options ){
             var withCredentials;
             var headers;
             var responseType;
+
+            console.log("bee");
 
             // Note that our preferred API is that you pass in a single object; the named
             // arguments are for legacy support.
@@ -2247,7 +2293,7 @@ function OpenSeadragon( options ){
                 }
             };
 
-            try {
+            var sendRequest = function() {
                 request.open( "GET", url, true );
 
                 if (responseType) {
@@ -2267,6 +2313,10 @@ function OpenSeadragon( options ){
                 }
 
                 request.send(null);
+            };
+
+            try {
+                $.queueAjaxRequest(request, sendRequest);
             } catch (e) {
                 var msg = e.message;
 
